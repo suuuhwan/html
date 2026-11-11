@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>테트리스</title>
+<style>
+:root{--bg:#e9ecef;--panel:#fff;--ink:#1d2430;--mute:#6b7280;--grid:#dde1e6;--well:#f6f7f9;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171c;--panel:#1d222a;--ink:#e8ebf0;--mute:#8b94a3;--grid:#2a303a;--well:#171b21}}
+:root[data-theme="dark"]{--bg:#14171c;--panel:#1d222a;--ink:#e8ebf0;--mute:#8b94a3;--grid:#2a303a;--well:#171b21}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:"Pretendard","Noto Sans KR",system-ui,sans-serif;display:flex;justify-content:center;padding:16px}
+.game{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
+.well{position:relative;background:var(--well);border:2px solid var(--ink);border-radius:6px;line-height:0}
+canvas{display:block;max-width:100%}
+.side{width:150px;display:flex;flex-direction:column;gap:12px}
+.box{background:var(--panel);border:1px solid var(--grid);border-radius:6px;padding:10px 12px}
+.box small{color:var(--mute);font-size:12px;display:block;margin-bottom:4px}
+.box b{font-size:22px;font-variant-numeric:tabular-nums}
+#next{display:block;margin:0 auto}
+.help{font-size:12px;color:var(--mute);line-height:1.7}
+.touch{display:none;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;margin-top:8px}
+.touch button,.btn{font:inherit;font-weight:600;background:var(--panel);color:var(--ink);border:1px solid var(--ink);border-radius:6px;padding:12px 0;cursor:pointer}
+.touch button:active,.btn:active{background:var(--ink);color:var(--bg)}
+.btn:focus-visible,.touch button:focus-visible{outline:3px solid #3b82f6;outline-offset:2px}
+.overlay{position:absolute;inset:0;background:rgba(20,23,28,.78);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;line-height:1.4;text-align:center;border-radius:4px}
+.overlay h2{margin:0;font-size:26px}
+.overlay p{margin:0;font-size:14px;opacity:.85}
+.hide{display:none}
+@media (pointer:coarse){.touch{display:grid}.help{display:none}}
+</style>
+</head>
+<body>
+<div class="game">
+  <div style="max-width:100%">
+    <div class="well">
+      <canvas id="board" width="300" height="600"></canvas>
+      <div class="overlay" id="ov"><h2>테트리스</h2><p>Enter 또는 버튼으로 시작</p><button class="btn" id="start" style="padding:10px 28px">시작</button></div>
+    </div>
+    <div class="touch">
+      <button data-a="left" aria-label="왼쪽">◀</button><button data-a="rot" aria-label="회전">회전</button><button data-a="right" aria-label="오른쪽">▶</button>
+      <button data-a="down" aria-label="아래">▼</button><button data-a="drop" aria-label="하드 드롭">드롭</button><button data-a="hold" aria-label="홀드">홀드</button>
+    </div>
+  </div>
+  <div class="side">
+    <div class="box"><small>점수</small><b id="score">0</b></div>
+    <div class="box"><small>줄</small><b id="lines">0</b></div>
+    <div class="box"><small>레벨</small><b id="level">1</b></div>
+    <div class="box"><small>다음</small><canvas id="next" width="96" height="72"></canvas></div>
+    <div class="box"><small>홀드 (C)</small><canvas id="hold" width="96" height="72" style="display:block;margin:0 auto"></canvas></div>
+    <div class="box help">←→ 이동<br>↑ / X 회전<br>Z 반대 회전<br>↓ 소프트 드롭<br>Space 하드 드롭<br>C 홀드<br>P 일시정지</div>
+  </div>
+</div>
+<script>
+(()=>{
+const COLS=10,ROWS=20,S=30;
+const cv=document.getElementById('board'),cx=cv.getContext('2d');
+const nx=document.getElementById('next').getContext('2d'),hd=document.getElementById('hold').getContext('2d');
+const ov=document.getElementById('ov');
+const COLORS={I:'#22b8cf',O:'#fab005',T:'#9c36b5',S:'#40c057',Z:'#fa5252',J:'#3b5bdb',L:'#fd7e14'};
+const SHAPES={
+I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+O:[[1,1],[1,1]],
+T:[[0,1,0],[1,1,1],[0,0,0]],
+S:[[0,1,1],[1,1,0],[0,0,0]],
+Z:[[1,1,0],[0,1,1],[0,0,0]],
+J:[[1,0,0],[1,1,1],[0,0,0]],
+L:[[0,0,1],[1,1,1],[0,0,0]]};
+let board,cur,nextType,holdType,canHold,bag=[],score,lines,level,over,paused,running=false,dropT,last,raf;
+const rot=(m,d)=>{const n=m.length,r=m.map(()=>Array(n).fill(0));
+ for(let y=0;y<n;y++)for(let x=0;x<n;x++){if(d>0)r[x][n-1-y]=m[y][x];else r[n-1-x][y]=m[y][x]}return r};
+const draw1=()=>{if(!bag.length){bag=Object.keys(SHAPES);for(let i=bag.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[bag[i],bag[j]]=[bag[j],bag[i]]}}return bag.pop()};
+const spawn=t=>{const m=SHAPES[t].map(r=>r.slice());return{t,m,x:Math.floor((COLS-m.length)/2),y:t==='I'?-1:0}};
+const hit=(m,px,py)=>{for(let y=0;y<m.length;y++)for(let x=0;x<m.length;x++)if(m[y][x]){const bx=px+x,by=py+y;if(bx<0||bx>=COLS||by>=ROWS)return true;if(by>=0&&board[by][bx])return true}return false};
+function reset(){board=Array.from({length:ROWS},()=>Array(COLS).fill(null));bag=[];score=0;lines=0;level=1;over=false;paused=false;holdType=null;canHold=true;
+ nextType=draw1();newPiece();ui();ov.classList.add('hide');dropT=0;last=performance.now();running=true;cancelAnimationFrame(raf);raf=requestAnimationFrame(loop)}
+function newPiece(){cur=spawn(nextType);nextType=draw1();canHold=true;if(hit(cur.m,cur.x,cur.y)){end()}}
+function end(){over=true;running=false;show('게임 오버',`점수 ${score} · 다시 시작하려면 Enter`)}
+function show(h,p){ov.innerHTML=`<h2>${h}</h2><p>${p}</p>`;ov.classList.remove('hide')}
+const speed=()=>Math.max(80,800-(level-1)*70);
+function move(dx){if(!hit(cur.m,cur.x+dx,cur.y)){cur.x+=dx;return true}return false}
+function turn(d){const m=rot(cur.m,d);for(const k of [0,-1,1,-2,2]){if(!hit(m,cur.x+k,cur.y)){cur.m=m;cur.x+=k;return}if(!hit(m,cur.x+k,cur.y-1)){cur.m=m;cur.x+=k;cur.y-=1;return}}}
+function lock(){cur.m.forEach((r,y)=>r.forEach((v,x)=>{if(v&&cur.y+y>=0)board[cur.y+y][cur.x+x]=cur.t}));
+ let c=0;for(let y=ROWS-1;y>=0;y--){if(board[y].every(Boolean)){board.splice(y,1);board.unshift(Array(COLS).fill(null));c++;y++}}
+ if(c){score+=[0,100,300,500,800][c]*level;lines+=c;level=1+Math.floor(lines/10)}
+ ui();newPiece()}
+function soft(){if(!hit(cur.m,cur.x,cur.y+1)){cur.y++;return true}lock();return false}
+function hard(){let n=0;while(!hit(cur.m,cur.x,cur.y+1)){cur.y++;n++}score+=n*2;lock()}
+function hold(){if(!canHold)return;const t=cur.t;if(holdType){cur=spawn(holdType)}else{cur=spawn(nextType);nextType=draw1()}holdType=t;canHold=false;ui()}
+function ui(){score_.textContent=score;lines_.textContent=lines;level_.textContent=level;mini(nx,nextType);mini(hd,holdType)}
+const score_=document.getElementById('score'),lines_=document.getElementById('lines'),level_=document.getElementById('level');
+function cell(c,x,y,s,col,a=1){c.globalAlpha=a;c.fillStyle=col;c.fillRect(x*s+1,y*s+1,s-2,s-2);c.globalAlpha=a*.35;c.fillStyle='#fff';c.fillRect(x*s+1,y*s+1,s-2,4);c.globalAlpha=1}
+function mini(c,t){c.clearRect(0,0,96,72);if(!t)return;const m=SHAPES[t],s=18,w=m.length*s;
+ let minx=9,maxx=0,miny=9,maxy=0;m.forEach((r,y)=>r.forEach((v,x)=>{if(v){minx=Math.min(minx,x);maxx=Math.max(maxx,x);miny=Math.min(miny,y);maxy=Math.max(maxy,y)}}));
+ const ox=(96-(maxx-minx+1)*s)/2/s-minx,oy=(72-(maxy-miny+1)*s)/2/s-miny;
+ m.forEach((r,y)=>r.forEach((v,x)=>{if(v)cell(c,x+ox,y+oy,s,COLORS[t])}))}
+function render(){const css=getComputedStyle(document.body);cx.clearRect(0,0,300,600);
+ cx.strokeStyle=css.getPropertyValue('--grid');cx.lineWidth=1;cx.beginPath();
+ for(let x=1;x<COLS;x++){cx.moveTo(x*S+.5,0);cx.lineTo(x*S+.5,600)}for(let y=1;y<ROWS;y++){cx.moveTo(0,y*S+.5);cx.lineTo(300,y*S+.5)}cx.stroke();
+ board.forEach((r,y)=>r.forEach((t,x)=>{if(t)cell(cx,x,y,S,COLORS[t])}));
+ if(cur&&!over){let gy=cur.y;while(!hit(cur.m,cur.x,gy+1))gy++;
+  cur.m.forEach((r,y)=>r.forEach((v,x)=>{if(v&&gy+y>=0)cell(cx,cur.x+x,gy+y,S,COLORS[cur.t],.2)}));
+  cur.m.forEach((r,y)=>r.forEach((v,x)=>{if(v&&cur.y+y>=0)cell(cx,cur.x+x,cur.y+y,S,COLORS[cur.t])}))}}
+function loop(t){if(!running)return render();const dt=t-last;last=t;
+ if(!paused){dropT+=dt;if(dropT>=speed()){dropT=0;soft()}}
+ render();raf=requestAnimationFrame(loop)}
+function pause(){if(!running)return;paused=!paused;paused?show('일시정지','P 키로 계속'):ov.classList.add('hide')}
+const act={left:()=>move(-1),right:()=>move(1),down:()=>{if(soft())score++,ui();dropT=0},rot:()=>turn(1),drop:hard,hold};
+function run(a){if(!running||paused)return;act[a]();}
+document.addEventListener('keydown',e=>{
+ const k=e.key;
+ if(k==='Enter'&&!running){reset();e.preventDefault();return}
+ if(k==='p'||k==='P'){pause();return}
+ if(!running||paused)return;
+ const map={ArrowLeft:'left',ArrowRight:'right',ArrowDown:'down',ArrowUp:'rot',x:'rot',X:'rot',' ':'drop',c:'hold',C:'hold'};
+ if(map[k]){e.preventDefault();run(map[k])}
+ else if(k==='z'||k==='Z'){turn(-1)}});
+document.getElementById('start').onclick=reset;
+document.querySelectorAll('.touch button').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();run(b.dataset.a)}));
+board=Array.from({length:ROWS},()=>Array(COLS).fill(null));render();
+})();
+</script>
+</body>
+</html>
